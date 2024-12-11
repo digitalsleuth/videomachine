@@ -14,10 +14,23 @@
 import os, sys
 import subprocess                   # used for running ffmpeg, qcli, and rsync
 import argparse                     # used for parsing input arguments
+import platform
+
+if platform.system() == 'Linux':
+    mount_cmd = 'mount'
+    unmount_cmd = 'umount'
+    mount_pts = '/mnt/'
+elif platform.system() == 'Darwin':
+    mount_cmd = 'hdiutil attach'
+    unmount_cmd = 'hdiutil detach'
+    mount_pts = '/Volumes/'
+
 def main():
 
 
     media_info_list = []
+    ffmpeg_path = subprocess.run(["which", "ffmpeg"], capture_output=True, text=True)
+    ffmpeg_command = f"{(ffmpeg_path.stdout).rstrip()} "
 
     ####init the stuff from the cli########
     parser = argparse.ArgumentParser(description="dvd_transcoder version 0.1.0: Creates a concatenatd video file from an DVD-Video ISO")
@@ -31,19 +44,19 @@ def main():
 
     #handling the input args. This is kind of a mess in this version
     if args.i is None:
-        print(bcolors.FAIL + "Please enter an input file!" + bcolors.ENDC)
+        print(f"{bcolors.FAIL}Please enter an input file!{bcolors.ENDC}")
         quit()
     if args.m is None:
-        print(bcolors.OKGREEN + "Running in Simple Bash Cat mode" + bcolors.ENDC)
+        print(f"{bcolors.OKGREEN}Running in Simple Bash Cat mode{bcolors.ENDC}")
         mode = 1
     elif args.m == "1":
-        print(bcolors.OKGREEN + "Running in Simple Bash Cat mode" + bcolors.ENDC)
+        print(f"{bcolors.OKGREEN}Running in Simple Bash Cat mode{bcolors.ENDC}")
         mode = 1
     elif args.m == "2":
-        print(bcolors.OKGREEN + "Running in FFmpeg Cat mode" + bcolors.ENDC)
+        print(f"{bcolors.OKGREEN}Running in FFmpeg Cat mode{bcolors.ENDC}")
         mode = 2
     else:
-        print(bcolors.FAIL + "Please select a valid mode (1 or 2)!" + bcolors.ENDC)
+        print(f"{bcolors.FAIL}Please select a valid mode (1 or 2)!{bcolors.ENDC}")
         quit()
     if args.f is None:
         output_format = "ProRes"
@@ -70,13 +83,12 @@ def main():
         transcode_string = " -movflags write_colr+faststart -color_primaries smpte170m -color_trc bt709 -colorspace smpte170m -color_range mpeg -vf 'setfield=bff,setdar=4/3' -c:v v210 -c:a pcm_s24l -ar 48000 "
         output_ext = ".mov"
     if args.o is None:
-        output_path = os.path.dirname(args.i) + "/"
+        output_path = f"{os.path.dirname(args.i)}/"
 
     if args.v:
-        ffmpeg_command = "/usr/local/bin/ffmpeg "
         print("Running in Verbose Mode")
     else:
-        ffmpeg_command = "/usr/local/bin/ffmpeg -hide_banner -loglevel panic "
+        ffmpeg_command = f"{ffmpeg_command}-hide_banner -loglevel panic "
 
     #This parts mounts the iso
     print("Mounting ISO...")
@@ -87,9 +99,9 @@ def main():
     try:
         ##move each vob over as a seperate file, adding each vob to a list to be concatenated
         if mode == 1:
-            print("Moving VOBs to Local directory and concatonating...")
+            print("Moving VOBs to Local directory and concatenating...")
             if cat_move_VOBS_to_local(args.i, mount_point, ffmpeg_command):
-                print("Finished moving VOBs to local directory and concatonating!")
+                print("Finished moving VOBs to local directory and concatenating!")
                 #transcode vobs into the target format
                 print("Transcoding VOBS to %s..." % (output_format))
                 cat_transcode_VOBS(args.i, transcode_string, output_ext, ffmpeg_command)
@@ -101,9 +113,9 @@ def main():
             if ffmpeg_move_VOBS_to_local(args.i, mount_point, ffmpeg_command, transcode_string, output_ext):
                 print("Finished transcoding VOBs to %s and moving to local directory..." % (output_format))
                 #concatenate vobs into a sungle file, format of the user's selection
-                print("Concatonating %s files..." % (output_format))
+                print("Concatenating %s files..." % (output_format))
                 ffmpeg_concatenate_VOBS(args.i, transcode_string, output_ext, ffmpeg_command)
-                print("Finished concatonating %s files!" % (output_format))
+                print("Finished concatenating %s files!" % (output_format))
             else:
                 print("No VOBs found. Quitting!")
 
@@ -139,26 +151,26 @@ def mount_Image(ISO_Path):
     ##figure out what the mountpoint will be
     while mount_point_exists:
         mount_point = "ISO_Volume_" + str(mount_increment)
-        mount_point_exists = os.path.isdir("/Volumes/" + mount_point)
+        mount_point_exists = os.path.isdir(f"{mount_pts}{mount_point}")
         mount_increment = mount_increment + 1
 
     ##mount ISO
     try:
-        mount_point = "/Volumes/" + mount_point
-        mount_command = "hdiutil attach '" + ISO_Path + "' -mountpoint " + mount_point
+        mount_point = f"{mount_pts}{mount_point}"
+        mount_command = f"{mount_cmd} '{ISO_Path}' {mount_point}"
         os.mkdir(mount_point)
-        hdiutil_return = run_command(mount_command)
-        if hdiutil_return == 1:
-            print(bcolors.FAIL + "Mounting Failed. Quitting Script" + bcolors.ENDC)
+        mount_return = run_command(mount_command)
+        if mount_return == 1:
+            print(f"{bcolors.FAIL}Mounting Failed. Quitting Script{bcolors.ENDC}")
             quit()
         return mount_point
     except PermissionError:
-        print(bcolors.FAIL + "Mounting failed due to permission error. Try running script in sudo mode" + bcolors.ENDC)
+        print(f"{bcolors.FAIL}Mounting failed due to permission error. Try running script in sudo mode{bcolors.ENDC}")
         quit()
 
 
 def unmount_Image(mount_point):
-    unmount_command = "hdiutil detach '" + mount_point + "'"
+    unmount_command = f"{unmount_cmd} '{mount_point}'"
     run_command(unmount_command)
     ##os.remove(mount_point)     #thought we needed this but i guess not...
     return True
