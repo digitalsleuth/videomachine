@@ -11,18 +11,15 @@
 #   0.2.0 - 20220906
 #       Combined Bash Cat and FFmpeg Cat into a single script.
 #
-#
-#
-#
-# import modules used here -- sys is a very standard one
+
 import os
 import sys
 import glob
-import subprocess  # used for running ffmpeg, qcli, and rsync
-import argparse  # used for parsing input arguments
+import subprocess
+import argparse
 import platform
 
-__version__ = "2.0.0-rc2"
+__version__ = "2.0.0-rc3"
 
 
 def main():
@@ -78,7 +75,7 @@ def main():
         dest="m",
         type=int,
         help="Selects concatenation mode. 1 = Simple Bash Cat, 2 = FFmpeg Cat",
-        default=1,
+        default=3,
     )
     parser.add_argument(
         "-o",
@@ -101,28 +98,26 @@ def main():
         default=False,
         help="run in verbose mode (including ffmpeg info)",
     )
-    parser.add_argument(
-        "-t",
-        action="store_true",
-        default=False,
-        help="test",
-    )
+    #parser.add_argument(
+    #    "-t",
+    #    action="store_true",
+    #    default=False,
+    #    help="test",
+    #)
     args = parser.parse_args()
 
     mode = args.m
     modes = {
         1: f"{bcolors.OKGREEN}[+] Running in Simple Bash Cat mode{bcolors.ENDC}",
         2: f"{bcolors.OKGREEN}[+] Running in FFmpeg Cat mode{bcolors.ENDC}",
-        3: f"{bcolors.OKGREEN}[+] Running in Windows concat mode{bcolors.ENDC}",
+        3: f"{bcolors.OKGREEN}[+] Running in Python read/write bytes mode{bcolors.ENDC}",
         }
     if mode not in modes:
         print(f"{bcolors.FAIL}[!] Please select a valid mode (1, 2 or 3)!{bcolors.ENDC}")
         sys.exit(1)
-    if system == 'Windows':
+    if system == 'Windows' and mode == 1:
+        print(f"{bcolors.WARNING}Simple Bash Cat mode is not available in Windows. Defaulting to Python read/write bytes mode (3){bcolors.ENDC}")
         mode = 3
-    elif system != 'Windows' and args.m == 3:
-        print(f"{bcolors.FAIL}Windows concat mode is only available in Windows. Please make another selection.{bcolors.ENDC}")
-        sys.exit(1)
     print(modes[mode])
     formats = {
         "ProRes": (" -c:v prores -profile:v 3 -c:a pcm_s24le -ar 48000 ", ".mov"),
@@ -135,16 +130,22 @@ def main():
         transcode_string, output_ext = formats["ProRes"]
     elif args.f not in formats:
         print("Please choose a valid output format from: v210, ProRes, H.264, FFv1")
-        sys.exit(1)        
+        sys.exit(1)
     else:
         output_format = args.f
         transcode_string, output_ext = formats[output_format]
 
-    if args.o is None:
-        if args.i[-1] != os.sep:
-            output_path = f"{os.path.dirname(args.i)}{os.sep}"
+    if not args.o:
+        if os.path.isdir(args.i):
+            if args.i[-1] != os.sep:
+                output_path = f"{args.i}{os.sep}"
+            else:
+                output_path = args.i
         else:
-            output_path = f"{os.path.dirname(args.i)}"
+            if args.i[-1] != os.sep:
+                output_path = f"{os.path.dirname(args.i)}{os.sep}"
+            else:
+                output_path = f"{os.path.dirname(args.i)}"
     else:
         if args.o[-1] != os.sep:
             output_path = f"{args.o}{os.sep}"
@@ -156,9 +157,9 @@ def main():
         ffmpeg_command += " -hide_banner -loglevel panic "
 
     all_args = vars(args)
-    if args.t:
-        test(all_args)
-       
+    #if args.t:
+    #    test(all_args)
+
     process_files = []
     if os.path.isdir(args.i):
         if args.r:
@@ -172,15 +173,17 @@ def main():
         process_files.append(args.i)
 
     process_files = sorted(process_files)
+    total_files = len(process_files)
+    left_to_process = process_files[:]
     for iso in process_files:
-        # This parts mounts the iso
+        # This part mounts the iso
         print(f"[-] Mounting ISO {iso}...")
         if system == "Windows":
             drive_letter = mount_Win_Image(iso, mount_cmd)
             mount_point = f"{drive_letter}:\\"
         else:
             mount_point = mount_Image(iso, mount_pts, mount_cmd)
-        print(f"[+] Finished Mounting ISO to {mount_point}")
+        print(f"[+] ISO mounted at {mount_point}")
 
         vob_path = f"{output_path}{os.path.basename(iso)}.VOBS"
         # This part processes the vobs
@@ -191,18 +194,18 @@ def main():
                 if cat_move_VOBS_to_local(
                     iso, mount_point, output_path
                 ):
-                    print(f"[+] Finished moving VOBs to {vob_path} and concatenating")
+                    print(f"[+] Finished moving and concatenating VOBs in {vob_path}")
                     # Transcode vobs into the target format
-                    print(f"[-] Transcoding {vob_path} to {output_format}")
-                    cat_transcode_VOBS(
+                    print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
+                    concat_transcode_VOBS(
                         iso, transcode_string, output_ext, ffmpeg_command, output_path
                     )
                     print(f"[+] Finished transcoding VOBS to {output_format}")
                 else:
-                    print("[!] No VOBs found. Quitting!")
+                    print("[!] No VOBs found. Exiting.")
             elif mode == 2:
                 print(
-                    f"[-] Transcoding VOBs to {output_format} and moving to local directory..."
+                    f"[-] Transcoding VOBs to {output_format} and outputting to {vob_path}..."
                 )
                 if ffmpeg_move_VOBS_to_local(
                     iso,
@@ -211,46 +214,47 @@ def main():
                     transcode_string,
                     output_ext,
                     output_path,
+                    args.v,
                 ):
                     print(
-                        f"[+] Finished transcoding VOBs to {output_format} and moving to local directory..."
+                        f"[+] Finished transcoding VOBs to {output_format}"
                     )
                     # Concatenate vobs into a single file, format of the user's selection
-                    print(f"[-] Concatenating {output_format} files...")
+                    print(f"[-] Concatenating {output_format} files from {vob_path}...")
                     ffmpeg_concatenate_VOBS(
-                        iso, output_ext, ffmpeg_command, output_path
+                        iso, output_ext, ffmpeg_command, output_path, args.v
                     )
                     print(f"[+] Finished concatenating {output_format} files")
                 else:
-                    print("[!] No VOBs found. Quitting!")
+                    print("[!] No VOBs found. Exiting.")
             elif mode == 3:
                 print(f"[-] Moving VOBs to {vob_path} and concatenating...")
-                if win_move_VOBS_to_local(
+                if py_move_VOBS_to_local(
                     iso, mount_point, output_path
                 ):
-                    print(f"[+] Finished moving VOBs to {vob_path} and concatenating")
+                    print(f"[+] Finished moving and concatenating VOBs in {vob_path}")
                     # Transcode vobs into the target format
-                    print(f"[-] Transcoding {vob_path} to {output_format}")
-                    cat_transcode_VOBS(
-                        iso, transcode_string, output_ext, ffmpeg_command, output_path
+                    print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
+                    concat_transcode_VOBS(
+                        iso, transcode_string, output_ext, ffmpeg_command, output_path, args.v
                     )
-                    print(f"[+] Finished transcoding VOBS to {output_format}")
+                    print(f"[+] Finished transcoding VOBs to {output_format}")
                 else:
-                    print("[!] No VOBs found. Quitting!")            
+                    print("[!] No VOBs found. Exiting.")
 
             # CLEANUP
             print("[-] Removing Temporary Files...")
             remove_temp_files(iso, output_path)
-            # Delete all fo the leftover files
+            # Delete all of the leftover files
             print("[+] Finished Removing Temporary Files")
 
-            # This parts unmounts the iso
-            print("[-] Unmounting ISO")
+            # This part unmounts the iso
+            print(f"[-] Unmounting {iso}")
             if system == 'Windows':
                 unmount_Win_Image(iso, unmount_cmd)
             else:
                 unmount_Image(mount_point, unmount_cmd)
-            print("[+] Finished Unmounting ISO")
+            print(f"[+] Unmounted {iso}")
             if system != 'Windows':
                 try:
                     print(f"[-] Removing mount point {mount_point}")
@@ -260,6 +264,7 @@ def main():
                         f"[!] Unable to remove the {mount_point} mount point. Manual removal may be required."
                     )
                     pass
+            left_to_process.remove(iso)
 
         # If the user quits the script mid-processes the script cleans up after itself
         except KeyboardInterrupt:
@@ -274,7 +279,12 @@ def main():
                 pass
             sys.exit(1)
 
-    print("[+] Completed conversion")
+        print('-----------------------')
+    print(f"[+] Completed conversion of {total_files - len(left_to_process)} ISO files.")
+    if len(left_to_process) > 0:
+        print("[!] The following files did not get converted:\n")
+        for file in left_to_process:
+            print(file)
 
 
 # FUNCTION DEFINITIONS
@@ -407,9 +417,8 @@ def cat_move_VOBS_to_local(file_path, mount_point, output_path):
 
 
 def ffmpeg_move_VOBS_to_local(
-    file_path, mount_point, ffmpeg_command, transcode_string, output_ext, output_path
+    file_path, mount_point, ffmpeg_command, transcode_string, output_ext, output_path, verbose
 ):
-
     input_vobList = []
     if output_path[-1] == os.sep:
         pass
@@ -425,7 +434,7 @@ def ffmpeg_move_VOBS_to_local(
                 vobNum = vobNum.split(".")[0]
                 vobNum = int(vobNum)
                 if vobNum > 0:
-                    input_vobList.append(f"{dirName}/{fname}")
+                    input_vobList.append(f"{dirName}{os.sep}{fname}")
 
     # Returns False if there are no VOBs found, otherwise it moves on
     if len(input_vobList) == 0:
@@ -440,13 +449,17 @@ def ffmpeg_move_VOBS_to_local(
         pass
 
     # This portion performs the copy of the VOBs to the SAN. They are concatenated after the copy so the streams are in the right order
-
+    ffmpeg_command = os.path.normpath(ffmpeg_command)
     for v in input_vobList:
-        v_name = v.split("/")[-1]
+        v_name = v.split(os.sep)[-1]
         v_name = v_name.replace(".VOB", output_ext)
-        out_vob_path = f"{out_dir}{v_name}"
-        ffmpeg_vob_copy_string = f"{ffmpeg_command} -i {v} -map 0:v:0 -map 0:a:0 -video_track_timescale 90000 -af apad -shortest -avoid_negative_ts make_zero -fflags +genpts -b:a 192k -y {transcode_string} '{out_vob_path}'"
-        run_command(ffmpeg_vob_copy_string)
+        out_vob_path = os.path.normpath(f'"{out_dir}{v_name}"')
+        v = os.path.normpath(f'"{v}"')
+        ffmpeg_vob_copy_string = f'{ffmpeg_command} -i {v} -map 0:v:0 -map 0:a:0 -video_track_timescale 90000 -af apad -shortest -avoid_negative_ts make_zero -fflags +genpts -b:a 192k -y {transcode_string} {out_vob_path}'
+        if platform.system() == 'Windows':
+            run_win_command(ffmpeg_vob_copy_string, powershell=False, capture_output=(not verbose))
+        else:
+            run_command(ffmpeg_vob_copy_string)
 
     # See if mylist already exists, if so delete it.
     remove_cat_list(file_path, output_path)
@@ -454,7 +467,7 @@ def ffmpeg_move_VOBS_to_local(
     # Write list of vobs to concat
     f = open(f"{file_path}.mylist.txt", "w")
     for v in input_vobList:
-        v_name = v.split("/")[-1]
+        v_name = v.split(os.sep)[-1]
         v_name = v_name.replace(".VOB", output_ext)
         out_vob_path = f"{out_dir}{v_name}"
         f.write(f"file '{out_vob_path}'")
@@ -463,7 +476,7 @@ def ffmpeg_move_VOBS_to_local(
 
     return has_vobs
 
-def win_move_VOBS_to_local(file_path, mount_point, output_path):
+def py_move_VOBS_to_local(file_path, mount_point, output_path):
 
     file_name_root = os.path.splitext(os.path.basename(file_path))[0]
     input_vobList = []
@@ -509,11 +522,8 @@ def win_move_VOBS_to_local(file_path, mount_point, output_path):
     except OSError:
         pass
 
-    # This portion performs the copy of the VOBs to the local storage. They are moved using the Windows `type` command
+    # This portion performs the copy of the VOBs to the local storage. They are moved using simple python byte read/write.
 
-    cmd = []
-    type_command = ""
-    output_disc_count = 1
     out_vob_path = os.path.normpath(f"{out_dir}{file_name_root}")
 
     with open(f"{out_vob_path}.vob", "wb") as dest:
@@ -524,8 +534,8 @@ def win_move_VOBS_to_local(file_path, mount_point, output_path):
                         dest.write(chunk)
     return has_vobs
 
-def cat_transcode_VOBS(
-    file_path, transcode_string, output_ext, ffmpeg_command, output_path
+def concat_transcode_VOBS(
+    file_path, transcode_string, output_ext, ffmpeg_command, output_path, verbose
 ):
     extension = os.path.splitext(file_path)[1]
     file_name = os.path.basename(file_path)
@@ -543,18 +553,18 @@ def cat_transcode_VOBS(
 
     if len(vob_list) == 1:
         output_path = os.path.normpath(f'"{output_path}{file_name.replace(extension,output_ext)}"')
-        vob_file = f'"{os.path.normpath(vob_list[0])}"'
+        vob_file = os.path.normpath(f'"{vob_list[0]}"')
         ffmpeg_command = os.path.normpath(ffmpeg_command)
         ffmpeg_vob_concat_string = f'{ffmpeg_command} -i {vob_file} -dn -map 0:v:0 -map 0:a:0{transcode_string}{output_path}'
         if platform.system() != 'Windows':
             run_command(ffmpeg_vob_concat_string)
         else:
-            run_win_command(ffmpeg_vob_concat_string, powershell=False)
+            run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
     else:
         inc = 1
         for vob_path in vob_list:
             output_path = (
-                os.path.normpath(f"{output_path}{file_name.replace(extension,'')}_{str(inc)}{output_ext}")
+                os.path.normpath(f'"{output_path}{file_name.replace(extension,"")}_{str(inc)}{output_ext}"')
             )
             ffmpeg_vob_concat_string = (
                 f'{ffmpeg_command} -i {os.path.normpath(vob_path)} {transcode_string} {output_path}'
@@ -562,34 +572,38 @@ def cat_transcode_VOBS(
             if platform.system() != 'Windows':
                 run_command(ffmpeg_vob_concat_string)
             else:
-                run_win_command(ffmpeg_vob_concat_string, powershell=False)
+                run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
             inc += 1
 
 
 def ffmpeg_concatenate_VOBS(
-    file_path, output_ext, ffmpeg_command, output_path
+    file_path, output_ext, ffmpeg_command, output_path, verbose
 ):
-    catList = f"{file_path}.mylist.txt"
+    ffmpeg_command = os.path.normpath(ffmpeg_command)
+    catList = os.path.normpath(f'"{file_path}.mylist.txt"')
     extension = os.path.splitext(file_path)[1]
     file_name = os.path.basename(file_path)
     if output_path[-1] == os.sep:
         pass
     else:
         output_path += os.sep
-    output_path = f"{output_path}{file_name.replace(extension,output_ext)}"
+    output_path = os.path.normpath(f'"{output_path}{file_name.replace(extension,output_ext)}"')
     ffmpeg_vob_concat_string = (
-        f"{ffmpeg_command} -f concat -safe 0 -i '{catList}' -c copy '{output_path}'"
+        f'{ffmpeg_command} -f concat -safe 0 -i {catList} -c copy {output_path}'
     )
-    run_command(ffmpeg_vob_concat_string)
+    if platform.system() != 'Windows':
+        run_command(ffmpeg_vob_concat_string)
+    else:
+        run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
     remove_cat_list(file_path, output_path)
 
 
-def run_win_command(command, powershell=True):
+def run_win_command(command, powershell=True, capture_output=True):
     try:
         if powershell:
-            run = subprocess.run(["powershell.exe", "-NoProfile", "-Command", command], capture_output=True, text=True)
+            run = subprocess.run(["powershell.exe", "-NoProfile", "-Command", command], capture_output=capture_output, text=True)
         else:
-            run = subprocess.run(command, capture_output=True, text=True)
+            run = subprocess.run(command, capture_output=capture_output, text=True)
         return run
     except Exception as e:
         print(e)
@@ -621,7 +635,7 @@ def remove_cat_list(file, output_dir):
     cat_file = f"{output_dir}{os.path.basename(file)}.mylist.txt"
     try:
         os.remove(cat_file)
-        print("Removing Cat List")
+        print("[-] Removing Cat List")
     except OSError:
         pass
 
