@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 # BAVC DVD Transcoder
 # Version History
+#   2.0.0-rc4 - 20241214
+#       fixed issue with v210 codec, added support for relative paths (redefining them to their abspath), added overwrite and binary options.
+#   2.0.0-rc3 - 20241212
+#       additional fixes for Windows support
 #   2.0.0-rc2 - 20241212
 #       additional Windows support added
 #   2.0.0-rc1 - 20241211
@@ -10,7 +14,8 @@
 #       improved error handling, removed old python2 code, removed unused imports. Prime Time!
 #   0.2.0 - 20220906
 #       Combined Bash Cat and FFmpeg Cat into a single script.
-#
+# TODO
+# - 
 
 import os
 import sys
@@ -19,7 +24,7 @@ import subprocess
 import argparse
 import platform
 
-__version__ = "2.0.0-rc3"
+__version__ = "2.0.0-rc4"
 
 
 def main():
@@ -56,23 +61,29 @@ def main():
         description=f"dvd_transcoder version {__version__}: Creates a concatenated video file from an DVD-Video ISO"
     )
     parser.add_argument(
+        "-b",
+        "--binary",
+        dest="binary",
+        help="path to the ffmpeg binary if using a standalone",
+    )
+    parser.add_argument(
         "-i",
         "--input",
-        dest="i",
+        dest="input",
         help="the path to the input directory or files",
         required=True,
     )
     parser.add_argument(
         "-f",
         "--format",
-        dest="f",
-        help="The output format (defaults to v210. Pick from v210, ProRes, H.264, FFv1)",
-        default="v210",
+        dest="format",
+        help="The output format (defaults to H.264. Pick from v210, ProRes, H.264, FFv1)",
+        default="H.264",
     )
     parser.add_argument(
         "-m",
         "--mode",
-        dest="m",
+        dest="mode",
         type=int,
         help="Selects concatenation mode. 1 = Simple Bash Cat, 2 = FFmpeg Cat",
         default=3,
@@ -80,23 +91,31 @@ def main():
     parser.add_argument(
         "-o",
         "--output",
-        dest="o",
+        dest="output",
         help="the output folder path (optional, defaults to the same as the input)",
     )
     parser.add_argument(
         "-r",
         "--recurse",
-        dest="r",
+        dest="recurse",
         help="if the input path is a directory, recursively search for all ISO's",
         action="store_true",
     )
     parser.add_argument(
         "-v",
         "--verbose",
-        dest="v",
+        dest="verbose",
         action="store_true",
         default=False,
         help="run in verbose mode (including ffmpeg info)",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        dest="overwrite",
+        action="store_true",
+        default=False,
+        help="allow overwrite of existing files, adds -y to ffmpeg command",
     )
     #parser.add_argument(
     #    "-t",
@@ -106,7 +125,10 @@ def main():
     #)
     args = parser.parse_args()
 
-    mode = args.m
+    if args.binary:
+        ffmpeg_command = args.binary
+    verbose = args.verbose
+    mode = args.mode
     modes = {
         1: f"{bcolors.OKGREEN}[+] Running in Simple Bash Cat mode{bcolors.ENDC}",
         2: f"{bcolors.OKGREEN}[+] Running in FFmpeg Cat mode{bcolors.ENDC}",
@@ -121,37 +143,41 @@ def main():
     print(modes[mode])
     formats = {
         "ProRes": (" -c:v prores -profile:v 3 -c:a pcm_s24le -ar 48000 ", ".mov"),
-        "v210": (" -movflags write_colr+faststart -color_primaries smpte170m -color_trc bt709 -colorspace smpte170m -color_range mpeg -vf 'setfield=bff,setdar=4/3' -c:v v210 -c:a pcm_s24l -ar 48000 ", ".mov"),
+        "v210": (" -movflags write_colr+faststart -color_primaries smpte170m -color_trc bt709 -colorspace smpte170m -color_range mpeg -vf setfield=bff,setdar=4/3 -c:v v210 -c:a pcm_s24le -ar 48000 ", ".mov"),
         "H.264": (" -c:v libx264 -pix_fmt yuv420p -movflags faststart -b:v 3500000 -b:a 160000 -ar 48000 -s 640x480 -vf yadif ", ".mp4"),
         "FFv1": (" -map 0 -dn -c:v ffv1 -level 3 -coder 1 -context 1 -g 1 -slicecrc 1 -slices 24 -field_order bb -color_primaries smpte170m -color_trc bt709 -colorspace smpte170m -c:a copy ", ".mkv"),
         }
-    if args.f is None:
+    if args.format is None:
         output_format = "ProRes"
         transcode_string, output_ext = formats["ProRes"]
-    elif args.f not in formats:
+    elif args.format not in formats:
         print("Please choose a valid output format from: v210, ProRes, H.264, FFv1")
         sys.exit(1)
     else:
-        output_format = args.f
+        output_format = args.format
         transcode_string, output_ext = formats[output_format]
-
-    if not args.o:
-        if os.path.isdir(args.i):
-            if args.i[-1] != os.sep:
-                output_path = f"{args.i}{os.sep}"
-            else:
-                output_path = args.i
-        else:
-            if args.i[-1] != os.sep:
-                output_path = f"{os.path.dirname(args.i)}{os.sep}"
-            else:
-                output_path = f"{os.path.dirname(args.i)}"
+    overwrite = args.overwrite
+    if overwrite:
+        transcode_string += " -y "
     else:
-        if args.o[-1] != os.sep:
-            output_path = f"{args.o}{os.sep}"
+        transcode_string += " -n "
+    if not args.output:
+        if os.path.isdir(args.input):
+            if args.input[-1] != os.sep:
+                output_path = f"{args.input}{os.sep}"
+            else:
+                output_path = args.input
         else:
-            output_path = args.o
-    if args.v:
+            if args.input[-1] != os.sep:
+                output_path = f"{os.path.dirname(args.input)}{os.sep}"
+            else:
+                output_path = f"{os.path.dirname(args.input)}"
+    else:
+        if args.output[-1] != os.sep:
+            output_path = f"{args.output}{os.sep}"
+        else:
+            output_path = args.output
+    if verbose:
         print("[+] Running in Verbose Mode")
     else:
         ffmpeg_command += " -hide_banner -loglevel panic "
@@ -161,16 +187,16 @@ def main():
     #    test(all_args)
 
     process_files = []
-    if os.path.isdir(args.i):
-        if args.r:
-            dir_contents = dir_recurse(args.i)
+    if os.path.isdir(args.input):
+        if args.recurse:
+            dir_contents = dir_recurse(args.input)
         else:
-            dir_contents = dir_recurse(args.i, recursive=False)
+            dir_contents = dir_recurse(args.input, recursive=False)
         for file in dir_contents:
             if os.path.splitext(file)[1].lower() == ".iso":
-                process_files.append(file)
+                process_files.append(os.path.abspath(file))
     else:
-        process_files.append(args.i)
+        process_files.append(os.path.abspath(args.input))
 
     process_files = sorted(process_files)
     total_files = len(process_files)
@@ -197,10 +223,14 @@ def main():
                     print(f"[+] Finished moving and concatenating VOBs in {vob_path}")
                     # Transcode vobs into the target format
                     print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
-                    concat_transcode_VOBS(
+                    errors = concat_transcode_VOBS(
                         iso, transcode_string, output_ext, ffmpeg_command, output_path
                     )
-                    print(f"[+] Finished transcoding VOBS to {output_format}")
+                    if not errors:
+                        print(f"[+] Finished transcoding VOBs to {output_format}")
+                        left_to_process.remove(iso)
+                    else:
+                        print(f"[!] Encountered an error processing {iso}")
                 else:
                     print("[!] No VOBs found. Exiting.")
             elif mode == 2:
@@ -214,17 +244,21 @@ def main():
                     transcode_string,
                     output_ext,
                     output_path,
-                    args.v,
+                    verbose,
                 ):
                     print(
                         f"[+] Finished transcoding VOBs to {output_format}"
                     )
                     # Concatenate vobs into a single file, format of the user's selection
                     print(f"[-] Concatenating {output_format} files from {vob_path}...")
-                    ffmpeg_concatenate_VOBS(
-                        iso, output_ext, ffmpeg_command, output_path, args.v
+                    errors = ffmpeg_concatenate_VOBS(
+                        iso, output_ext, ffmpeg_command, output_path, verbose, overwrite
                     )
-                    print(f"[+] Finished concatenating {output_format} files")
+                    if not errors:
+                        print(f"[+] Finished concatenating {output_format} files")
+                        left_to_process.remove(iso)
+                    else:
+                        print(f"[!] Encountered an error processing {iso}")
                 else:
                     print("[!] No VOBs found. Exiting.")
             elif mode == 3:
@@ -235,10 +269,14 @@ def main():
                     print(f"[+] Finished moving and concatenating VOBs in {vob_path}")
                     # Transcode vobs into the target format
                     print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
-                    concat_transcode_VOBS(
-                        iso, transcode_string, output_ext, ffmpeg_command, output_path, args.v
+                    errors = concat_transcode_VOBS(
+                        iso, transcode_string, output_ext, ffmpeg_command, output_path, verbose
                     )
-                    print(f"[+] Finished transcoding VOBs to {output_format}")
+                    if not errors:
+                        print(f"[+] Finished transcoding VOBs to {output_format}")
+                        left_to_process.remove(iso)
+                    else:
+                        print(f"[!] Encountered an error processing {iso}")
                 else:
                     print("[!] No VOBs found. Exiting.")
 
@@ -264,7 +302,6 @@ def main():
                         f"[!] Unable to remove the {mount_point} mount point. Manual removal may be required."
                     )
                     pass
-            left_to_process.remove(iso)
 
         # If the user quits the script mid-processes the script cleans up after itself
         except KeyboardInterrupt:
@@ -280,11 +317,11 @@ def main():
             sys.exit(1)
 
         print('-----------------------')
-    print(f"[+] Completed conversion of {total_files - len(left_to_process)} ISO files.")
+    print(f"[+] Completed processing {total_files - len(left_to_process)} ISO files.")
     if len(left_to_process) > 0:
         print("[!] The following files did not get converted:\n")
         for file in left_to_process:
-            print(file)
+            print(f"\t - {file}")
 
 
 # FUNCTION DEFINITIONS
@@ -420,6 +457,7 @@ def ffmpeg_move_VOBS_to_local(
     file_path, mount_point, ffmpeg_command, transcode_string, output_ext, output_path, verbose
 ):
     input_vobList = []
+    output_path = os.path.abspath(output_path)
     if output_path[-1] == os.sep:
         pass
     else:
@@ -537,8 +575,10 @@ def py_move_VOBS_to_local(file_path, mount_point, output_path):
 def concat_transcode_VOBS(
     file_path, transcode_string, output_ext, ffmpeg_command, output_path, verbose
 ):
+    errors = False
     extension = os.path.splitext(file_path)[1]
     file_name = os.path.basename(file_path)
+    output_path = os.path.abspath(output_path)
     if output_path[-1] == os.sep:
         pass
     else:
@@ -552,51 +592,76 @@ def concat_transcode_VOBS(
                 vob_list.append(f"{out_dir}{v}")
 
     if len(vob_list) == 1:
-        output_path = os.path.normpath(f'"{output_path}{file_name.replace(extension,output_ext)}"')
+        output_path = os.path.normpath(f'{output_path}{file_name.replace(extension,output_ext)}')
         vob_file = os.path.normpath(f'"{vob_list[0]}"')
         ffmpeg_command = os.path.normpath(ffmpeg_command)
-        ffmpeg_vob_concat_string = f'{ffmpeg_command} -i {vob_file} -dn -map 0:v:0 -map 0:a:0{transcode_string}{output_path}'
-        if platform.system() != 'Windows':
-            run_command(ffmpeg_vob_concat_string)
+        ffmpeg_vob_concat_string = f'{ffmpeg_command} -i {vob_file} -dn -map 0:v:0 -map 0:a:0{transcode_string}"{output_path}"'
+        if os.path.exists(output_path) and ' -n ' in transcode_string:
+            print(f"[!] {output_path} exists and overwrite is set to 'NO', destination will not be overwritten")
         else:
-            run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
+            if platform.system() != 'Windows':
+                result = run_command(ffmpeg_vob_concat_string)
+                if result.returncode != 0:
+                    errors = True
+            else:
+                result = run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
+                if result.returncode != 0:
+                    errors = True
     else:
         inc = 1
         for vob_path in vob_list:
             output_path = (
-                os.path.normpath(f'"{output_path}{file_name.replace(extension,"")}_{str(inc)}{output_ext}"')
+                os.path.normpath(f'{output_path}{file_name.replace(extension,"")}_{str(inc)}{output_ext}')
             )
             ffmpeg_vob_concat_string = (
-                f'{ffmpeg_command} -i {os.path.normpath(vob_path)} {transcode_string} {output_path}'
+                f'{ffmpeg_command} -i {os.path.normpath(vob_path)} {transcode_string} "{output_path}"'
             )
-            if platform.system() != 'Windows':
-                run_command(ffmpeg_vob_concat_string)
+            if os.path.exists(output_path) and ' -n ' in transcode_string:
+                print(f"[!] {output_path} exists and overwrite is set to 'NO', destination will not be overwritten")
             else:
-                run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
-            inc += 1
-
+                if platform.system() != 'Windows':
+                    result = run_command(ffmpeg_vob_concat_string)
+                    if result.returncode != 0:
+                        errors = True
+                else:
+                    result = run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
+                    if result.returncode != 0:
+                        errors = True
+                inc += 1
+    return errors
 
 def ffmpeg_concatenate_VOBS(
-    file_path, output_ext, ffmpeg_command, output_path, verbose
+    file_path, output_ext, ffmpeg_command, output_path, verbose, overwrite
 ):
+    errors = False
     ffmpeg_command = os.path.normpath(ffmpeg_command)
     catList = os.path.normpath(f'"{file_path}.mylist.txt"')
     extension = os.path.splitext(file_path)[1]
     file_name = os.path.basename(file_path)
+    output_path = os.path.abspath(output_path)
     if output_path[-1] == os.sep:
         pass
     else:
         output_path += os.sep
-    output_path = os.path.normpath(f'"{output_path}{file_name.replace(extension,output_ext)}"')
+    output_path = os.path.normpath(f'{output_path}{file_name.replace(extension,output_ext)}')
     ffmpeg_vob_concat_string = (
-        f'{ffmpeg_command} -f concat -safe 0 -i {catList} -c copy {output_path}'
+        f'{ffmpeg_command} -f concat -safe 0 -i {catList} -c copy "{output_path}"'
     )
-    if platform.system() != 'Windows':
-        run_command(ffmpeg_vob_concat_string)
+    if overwrite:
+        ffmpeg_vob_concat_string += " -y "
+    if os.path.exists(output_path) and not overwrite:
+        print(f"[!] {output_path} exists and overwrite is set to 'NO', destination will not be overwritten")
     else:
-        run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
-    remove_cat_list(file_path, output_path)
-
+        if platform.system() != 'Windows':
+            result = run_command(ffmpeg_vob_concat_string)
+            if result.returncode != 0:
+                errors = True
+        else:
+            result = run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
+            if result.returncode != 0:
+                errors = True
+        remove_cat_list(file_path, output_path)
+    return errors
 
 def run_win_command(command, powershell=True, capture_output=True):
     try:
@@ -633,11 +698,12 @@ def remove_temp_files(file, output_dir):
 
 def remove_cat_list(file, output_dir):
     cat_file = f"{output_dir}{os.path.basename(file)}.mylist.txt"
-    try:
-        os.remove(cat_file)
-        print("[-] Removing Cat List")
-    except OSError:
-        pass
+    if os.path.exists(cat_file):
+        try:
+            os.remove(cat_file)
+            print(f"[-] Removing Cat List {cat_file}")
+        except OSError:
+            pass
 
 
 def dir_recurse(path, recursive=True):
