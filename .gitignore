@@ -1,4 +1,9 @@
-
-.DS_Store
+build/
+dist/
+dvd.ico
+dvd-transcoder-version.txt
+dvd-transcoder.spec
 config.py
 config.*.pyc
+@eaDir*
+bins/

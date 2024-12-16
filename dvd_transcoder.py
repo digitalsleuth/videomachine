@@ -23,8 +23,9 @@ import glob
 import subprocess
 import argparse
 import platform
+import time
 
-__version__ = "2.0.0-rc4"
+__version__ = "2.0.0-rc5"
 
 
 def main():
@@ -203,7 +204,7 @@ def main():
     left_to_process = process_files[:]
     for iso in process_files:
         # This part mounts the iso
-        print(f"[-] Mounting ISO {iso}...")
+        print(f"[-] Mounting ISO {iso}")
         if system == "Windows":
             drive_letter = mount_Win_Image(iso, mount_cmd)
             mount_point = f"{drive_letter}:\\"
@@ -216,7 +217,7 @@ def main():
         try:
             # Move each vob over as a separate file, adding each vob to a list to be concatenated
             if mode == 1:
-                print(f"[-] Moving VOBs to {vob_path} and concatenating...")
+                print(f"[-] Moving VOBs to {vob_path} and concatenating")
                 if cat_move_VOBS_to_local(
                     iso, mount_point, output_path
                 ):
@@ -224,7 +225,7 @@ def main():
                     # Transcode vobs into the target format
                     print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
                     errors = concat_transcode_VOBS(
-                        iso, transcode_string, output_ext, ffmpeg_command, output_path
+                        iso, transcode_string, output_ext, ffmpeg_command, output_path, verbose
                     )
                     if not errors:
                         print(f"[+] Finished transcoding VOBs to {output_format}")
@@ -235,7 +236,7 @@ def main():
                     print("[!] No VOBs found. Exiting.")
             elif mode == 2:
                 print(
-                    f"[-] Transcoding VOBs to {output_format} and outputting to {vob_path}..."
+                    f"[-] Transcoding VOBs to {output_format} and outputting to {vob_path}"
                 )
                 if ffmpeg_move_VOBS_to_local(
                     iso,
@@ -250,7 +251,7 @@ def main():
                         f"[+] Finished transcoding VOBs to {output_format}"
                     )
                     # Concatenate vobs into a single file, format of the user's selection
-                    print(f"[-] Concatenating {output_format} files from {vob_path}...")
+                    print(f"[-] Concatenating {output_format} files from {vob_path}")
                     errors = ffmpeg_concatenate_VOBS(
                         iso, output_ext, ffmpeg_command, output_path, verbose, overwrite
                     )
@@ -262,7 +263,7 @@ def main():
                 else:
                     print("[!] No VOBs found. Exiting.")
             elif mode == 3:
-                print(f"[-] Moving VOBs to {vob_path} and concatenating...")
+                print(f"[-] Moving VOBs to {vob_path} and concatenating")
                 if py_move_VOBS_to_local(
                     iso, mount_point, output_path
                 ):
@@ -281,7 +282,7 @@ def main():
                     print("[!] No VOBs found. Exiting.")
 
             # CLEANUP
-            print("[-] Removing Temporary Files...")
+            print("[-] Removing Temporary Files")
             remove_temp_files(iso, output_path)
             # Delete all of the leftover files
             print("[+] Finished Removing Temporary Files")
@@ -376,6 +377,7 @@ def unmount_Win_Image(iso, unmount_cmd):
     iso = os.path.normpath(iso)
     try:
         unmount = run_win_command(f'{unmount_cmd} "{iso}"')
+        time.sleep(3)
     except Exception as e:
         print(e)
 
@@ -605,6 +607,9 @@ def concat_transcode_VOBS(
                     errors = True
             else:
                 result = run_win_command(ffmpeg_vob_concat_string, powershell=False, capture_output=(not verbose))
+                ## DEBUG
+                print(result)
+                ## DEBUG END
                 if result.returncode != 0:
                     errors = True
     else:
