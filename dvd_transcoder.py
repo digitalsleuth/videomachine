@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 # BAVC DVD Transcoder
 # Version History
+#   2.0.0-rc8 - 20241216
+#       added H.265 format, options to choose CRF to account for space, use of ffprobe to determine original res to output at the same resolution
+#       also added option to supply separate ffprobe binary for standalone.
 #   2.0.0-rc7 - 20241216
 #       detects if ffmpeg is in path
 #   2.0.0-rc5 & 6 - 20241216
@@ -29,7 +32,7 @@ import argparse
 import platform
 import time
 
-__version__ = "2.0.0-rc7"
+__version__ = "2.0.0-rc8"
 
 
 def main():
@@ -43,6 +46,10 @@ def main():
             ["which", "ffmpeg"], capture_output=True, text=True
         )
         ffmpeg_command = f"{(ffmpeg_path.stdout).rstrip()}"
+        ffprobe_path = subprocess.run(
+            ["which", "ffprobe"], capture_output=True, text=True
+        )
+        ffprobe_command = f"{(ffprobe_path.stdout).rstrip()}"
     elif platform.system() == "Darwin":
         system = "Mac"
         mount_cmd = "hdiutil attach"
@@ -52,6 +59,10 @@ def main():
             ["which", "ffmpeg"], capture_output=True, text=True
         )
         ffmpeg_command = f"{(ffmpeg_path.stdout).rstrip()}"
+        ffprobe_path = subprocess.run(
+            ["which", "ffprobe"], capture_output=True, text=True
+        )
+        ffprobe_command = f"{(ffprobe_path.stdout).rstrip()}"        
     elif platform.system() == "Windows":
         system = "Windows"
         mount_cmd = "Mount-DiskImage -PassThru"
@@ -61,6 +72,10 @@ def main():
             ["where", "ffmpeg"], capture_output=True, text=True
         ).stdout.split('\n')[0]
         ffmpeg_command = ffmpeg_path
+        ffprobe_path = subprocess.run(
+            ["where", "ffprobe"], capture_output=True, text=True
+        ).stdout.split('\n')[0]
+        ffprobe_command = ffprobe_path        
     parser = argparse.ArgumentParser(
         description=f"dvd_transcoder version {__version__}: Creates a concatenated video file from an DVD-Video ISO"
     )
@@ -69,6 +84,14 @@ def main():
         "--binary",
         dest="binary",
         help="path to the ffmpeg binary if using a standalone",
+    )
+    parser.add_argument(
+        "-c",
+        "--crf",
+        dest="crf",
+        help="change the Constant Rate Factor, default is 18. Lower number, higher bitrate, larger size.",
+        type=int,
+        default=20,
     )
     parser.add_argument(
         "-i",
@@ -81,7 +104,7 @@ def main():
         "-f",
         "--format",
         dest="format",
-        help="The output format (defaults to H.264. Pick from v210, ProRes, H.264, FFv1)",
+        help="The output format (defaults to H.264. Pick from v210, ProRes, H.264, H.265 FFv1)",
         default="H.264",
     )
     parser.add_argument(
@@ -97,6 +120,12 @@ def main():
         "--output",
         dest="output",
         help="the output folder path (optional, defaults to the same as the input)",
+    )
+    parser.add_argument(
+        "-p",
+        "--probe",
+        dest="probe",
+        help="path to the ffprobe binary if using a standalone",
     )
     parser.add_argument(
         "-r",
@@ -121,12 +150,6 @@ def main():
         default=False,
         help="allow overwrite of existing files, adds -y to ffmpeg command",
     )
-    #parser.add_argument(
-    #    "-t",
-    #    action="store_true",
-    #    default=False,
-    #    help="test",
-    #)
     args = parser.parse_args()
 
     if args.binary:
@@ -134,6 +157,9 @@ def main():
     if ffmpeg_path == '' and not args.binary:
         print("[!] ffmpeg not found in path! If you are using a standalone binary, use the '-b' argument.")
         sys.exit(1)
+    if ffprobe_path == '' and not args.probe:
+        print("[!] ffprobe not found in path! It is not required, but can detect the resolution of the source video and assist in transcoding to the same resolution.")
+        pass
     verbose = args.verbose
     mode = args.mode
     modes = {
@@ -151,14 +177,12 @@ def main():
     formats = {
         "ProRes": (" -c:v prores -profile:v 3 -c:a pcm_s24le -ar 48000 ", ".mov"),
         "v210": (" -movflags write_colr+faststart -color_primaries smpte170m -color_trc bt709 -colorspace smpte170m -color_range mpeg -vf setfield=bff,setdar=4/3 -c:v v210 -c:a pcm_s24le -ar 48000 ", ".mov"),
-        "H.264": (" -c:v libx264 -pix_fmt yuv420p -movflags faststart -b:v 3500000 -b:a 160000 -ar 48000 -s 640x480 -vf yadif ", ".mp4"),
+        "H.264": (f" -c:v libx264 -pix_fmt yuv420p -movflags faststart -b:v 3500000 -b:a 160000 -ar 48000 -s 640x480 -vf yadif -crf {args.crf} ", ".mp4"),
+        "H.265": (f" -c:v libx265 -pix_fmt yuv420p -movflags faststart -b:v 3500000 -b:a 160000 -ar 48000 -s 640x480 -vf yadif -crf {args.crf} ", ".mp4"),
         "FFv1": (" -map 0 -dn -c:v ffv1 -level 3 -coder 1 -context 1 -g 1 -slicecrc 1 -slices 24 -field_order bb -color_primaries smpte170m -color_trc bt709 -colorspace smpte170m -c:a copy ", ".mkv"),
         }
-    if args.format is None:
-        output_format = "ProRes"
-        transcode_string, output_ext = formats["ProRes"]
-    elif args.format not in formats:
-        print("Please choose a valid output format from: v210, ProRes, H.264, FFv1")
+    if args.format not in formats:
+        print("Please choose a valid output format from: v210, ProRes, H.264, H.265, FFv1")
         sys.exit(1)
     else:
         output_format = args.format
@@ -190,8 +214,6 @@ def main():
         ffmpeg_command += " -hide_banner -loglevel panic "
 
     all_args = vars(args)
-    #if args.t:
-    #    test(all_args)
 
     process_files = []
     if os.path.isdir(args.input):
@@ -231,7 +253,7 @@ def main():
                     # Transcode vobs into the target format
                     print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
                     errors = concat_transcode_VOBS(
-                        iso, transcode_string, output_ext, ffmpeg_command, output_path, verbose
+                        iso, transcode_string, output_ext, ffmpeg_command, ffprobe_command, output_path, verbose
                     )
                     if not errors:
                         print(f"[+] Finished transcoding VOBs to {output_format}")
@@ -239,7 +261,7 @@ def main():
                     else:
                         print(f"[!] Encountered an error processing {iso}")
                 else:
-                    print("[!] No VOBs found. Exiting.")
+                    print("[!] No VOBs found.")
             elif mode == 2:
                 print(
                     f"[-] Transcoding VOBs to {output_format} and outputting to {vob_path}"
@@ -248,6 +270,7 @@ def main():
                     iso,
                     mount_point,
                     ffmpeg_command,
+                    ffprobe_command,
                     transcode_string,
                     output_ext,
                     output_path,
@@ -267,7 +290,7 @@ def main():
                     else:
                         print(f"[!] Encountered an error processing {iso}")
                 else:
-                    print("[!] No VOBs found. Exiting.")
+                    print("[!] No VOBs found.")
             elif mode == 3:
                 print(f"[-] Moving VOBs to {vob_path} and concatenating")
                 if py_move_VOBS_to_local(
@@ -277,7 +300,7 @@ def main():
                     # Transcode vobs into the target format
                     print(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
                     errors = concat_transcode_VOBS(
-                        iso, transcode_string, output_ext, ffmpeg_command, output_path, verbose
+                        iso, transcode_string, output_ext, ffmpeg_command, ffprobe_command, output_path, verbose
                     )
                     if not errors:
                         print(f"[+] Finished transcoding VOBs to {output_format}")
@@ -285,7 +308,7 @@ def main():
                     else:
                         print(f"[!] Encountered an error processing {iso}")
                 else:
-                    print("[!] No VOBs found. Exiting.")
+                    print("[!] No VOBs found or errors detected.")
 
             # CLEANUP
             print("[-] Removing Temporary Files")
@@ -326,9 +349,9 @@ def main():
         print('-----------------------')
     print(f"[+] Completed processing {total_files - len(left_to_process)} ISO files.")
     if len(left_to_process) > 0:
-        print("[!] The following files did not get converted:\n")
+        print("[!] The following files did not get converted:")
         for file in left_to_process:
-            print(f"\t - {file}")
+            print(f"  - {file}")
 
 
 # FUNCTION DEFINITIONS
@@ -462,7 +485,7 @@ def cat_move_VOBS_to_local(file_path, mount_point, output_path):
 
 
 def ffmpeg_move_VOBS_to_local(
-    file_path, mount_point, ffmpeg_command, transcode_string, output_ext, output_path, verbose
+    file_path, mount_point, ffmpeg_command, ffprobe_command, transcode_string, output_ext, output_path, verbose
 ):
     input_vobList = []
     output_path = os.path.abspath(output_path)
@@ -501,7 +524,24 @@ def ffmpeg_move_VOBS_to_local(
         v_name = v_name.replace(".VOB", output_ext)
         out_vob_path = os.path.normpath(f'"{out_dir}{v_name}"')
         v = os.path.normpath(f'"{v}"')
-        ffmpeg_vob_copy_string = f'{ffmpeg_command} -i {v} -map 0:v:0 -map 0:a:0 -video_track_timescale 90000 -af apad -shortest -avoid_negative_ts make_zero -fflags +genpts -b:a 192k -y {transcode_string} {out_vob_path}'
+        if ffprobe_command and '-s 640x480' in transcode_string:
+            if platform.system() != 'Windows':
+                try:
+                    get_res = run_command(f"{ffprobe_command} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {v}")
+                    get_res = get_res.stdout.rstrip().split(',')
+                    source_res = f"{get_res[0]}x{get_res[1]}"
+                    transcode_string = transcode_string.replace('640x480',source_res)
+                except Exception:
+                    pass
+            else:
+                try:
+                    get_res = run_win_command(f"{ffprobe_command} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {v}")
+                    get_res = get_res.stdout.rstrip().split(',')
+                    source_res = f"{get_res[0]}x{get_res[1]}"
+                    transcode_string = transcode_string.replace('640x480',source_res)
+                except Exception:
+                    pass        
+        ffmpeg_vob_copy_string = f'{ffmpeg_command} -i {v} -map 0:v:0 -map 0:a:0 -video_track_timescale 90000 -af apad -shortest -avoid_negative_ts make_zero -fflags +genpts -b:a 192k {transcode_string} {out_vob_path}'
         if platform.system() == 'Windows':
             run_win_command(ffmpeg_vob_copy_string, powershell=False, capture_output=(not verbose))
         else:
@@ -523,7 +563,7 @@ def ffmpeg_move_VOBS_to_local(
     return has_vobs
 
 def py_move_VOBS_to_local(file_path, mount_point, output_path):
-
+    clean = True
     file_name_root = os.path.splitext(os.path.basename(file_path))[0]
     input_vobList = []
     input_discList = []
@@ -576,17 +616,26 @@ def py_move_VOBS_to_local(file_path, mount_point, output_path):
         for disc in input_discList:
             for vob in disc:
                 with open(vob, "rb") as src:
-                    while chunk := src.read(1024 * 1024):
-                        dest.write(chunk)
-    return has_vobs
+                    try:
+                        while chunk := src.read(1024 * 1024):
+                            dest.write(chunk)
+                    except OSError as e:
+                        print(f"[!] Unable to process {vob} - skipping")
+                        clean = False
+                        continue
+    return has_vobs and clean
 
 def concat_transcode_VOBS(
-    file_path, transcode_string, output_ext, ffmpeg_command, output_path, verbose
+    file_path, transcode_string, output_ext, ffmpeg_command, ffprobe_command, output_path, verbose
 ):
     errors = False
     extension = os.path.splitext(file_path)[1]
     file_name = os.path.basename(file_path)
     output_path = os.path.abspath(output_path)
+    if ffprobe_command != '':
+        ffprobe_command = os.path.normpath(ffprobe_command)
+    else:
+        ffprobe_command = False
     if output_path[-1] == os.sep:
         pass
     else:
@@ -602,6 +651,23 @@ def concat_transcode_VOBS(
     if len(vob_list) == 1:
         output_path = os.path.normpath(f'{output_path}{file_name.replace(extension,output_ext)}')
         vob_file = os.path.normpath(f'"{vob_list[0]}"')
+        if ffprobe_command and '-s 640x480' in transcode_string:
+            if platform.system() != 'Windows':
+                try:
+                    get_res = run_command(f"{ffprobe_command} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {vob_file}")
+                    get_res = get_res.stdout.rstrip().split(',')
+                    source_res = f"{get_res[0]}x{get_res[1]}"
+                    transcode_string = transcode_string.replace('640x480',source_res)
+                except Exception:
+                    pass
+            else:
+                try:
+                    get_res = run_win_command(f"{ffprobe_command} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {vob_file}")
+                    get_res = get_res.stdout.rstrip().split(',')
+                    source_res = f"{get_res[0]}x{get_res[1]}"
+                    transcode_string = transcode_string.replace('640x480',source_res)
+                except Exception:
+                    pass
         ffmpeg_command = os.path.normpath(ffmpeg_command)
         ffmpeg_vob_concat_string = f'{ffmpeg_command} -i {vob_file} -dn -map 0:v:0 -map 0:a:0{transcode_string}"{output_path}"'
         if os.path.exists(output_path) and ' -n ' in transcode_string:
@@ -621,8 +687,26 @@ def concat_transcode_VOBS(
             output_path = (
                 os.path.normpath(f'{output_path}{file_name.replace(extension,"")}_{str(inc)}{output_ext}')
             )
+            vob_path = os.path.normpath(vob_path)
+            if ffprobe_command and '-s 640x480' in transcode_string:
+                if platform.system() != 'Windows':
+                    try:
+                        get_res = run_command(f"{ffprobe_command} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {vob_path}")
+                        get_res = get_res.stdout.rstrip().split(',')
+                        source_res = f"{get_res[0]}x{get_res[1]}"
+                        transcode_string = transcode_string.replace('640x480',source_res)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        get_res = run_win_command(f"{ffprobe_command} -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 {vob_path}")
+                        get_res = get_res.stdout.rstrip().split(',')
+                        source_res = f"{get_res[0]}x{get_res[1]}"
+                        transcode_string = transcode_string.replace('640x480',source_res)
+                    except Exception:
+                        pass            
             ffmpeg_vob_concat_string = (
-                f'{ffmpeg_command} -i {os.path.normpath(vob_path)} {transcode_string} "{output_path}"'
+                f'{ffmpeg_command} -i {vob_path} {transcode_string} "{output_path}"'
             )
             if os.path.exists(output_path) and ' -n ' in transcode_string:
                 print(f"[!] {output_path} exists and overwrite is set to 'NO', destination will not be overwritten")
