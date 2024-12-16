@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 # BAVC DVD Transcoder
 # Version History
+#   2.0.0-rc7 - 20241216
+#       detects if ffmpeg is in path
+#   2.0.0-rc5 & 6 - 20241216
+#       debugging output
 #   2.0.0-rc4 - 20241214
 #       fixed issue with v210 codec, added support for relative paths (redefining them to their abspath), added overwrite and binary options.
 #   2.0.0-rc3 - 20241212
@@ -25,7 +29,7 @@ import argparse
 import platform
 import time
 
-__version__ = "2.0.0-rc6"
+__version__ = "2.0.0-rc7"
 
 
 def main():
@@ -57,7 +61,6 @@ def main():
             ["where", "ffmpeg"], capture_output=True, text=True
         ).stdout.split('\n')[0]
         ffmpeg_command = ffmpeg_path
-
     parser = argparse.ArgumentParser(
         description=f"dvd_transcoder version {__version__}: Creates a concatenated video file from an DVD-Video ISO"
     )
@@ -128,6 +131,9 @@ def main():
 
     if args.binary:
         ffmpeg_command = args.binary
+    if ffmpeg_path == '' and not args.binary:
+        print("[!] ffmpeg not found in path! If you are using a standalone binary, use the '-b' argument.")
+        sys.exit(1)
     verbose = args.verbose
     mode = args.mode
     modes = {
@@ -598,12 +604,6 @@ def concat_transcode_VOBS(
         vob_file = os.path.normpath(f'"{vob_list[0]}"')
         ffmpeg_command = os.path.normpath(ffmpeg_command)
         ffmpeg_vob_concat_string = f'{ffmpeg_command} -i {vob_file} -dn -map 0:v:0 -map 0:a:0{transcode_string}"{output_path}"'
-        ## DEBUG
-        print(output_path)
-        print(vob_file)
-        print(ffmpeg_command)
-        print(ffmpeg_vob_concat_string)
-        ## DEBUG END
         if os.path.exists(output_path) and ' -n ' in transcode_string:
             print(f"[!] {output_path} exists and overwrite is set to 'NO', destination will not be overwritten")
         else:
