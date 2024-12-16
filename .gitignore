@@ -3,7 +3,9 @@ dist/
 dvd.ico
 dvd-transcoder-version.txt
 dvd-transcoder.spec
+dvd-transcoder-linux.spec
 config.py
 config.*.pyc
 @eaDir*
 bins/
+
