@@ -3,6 +3,8 @@
 # BAVC DVD Transcoder
 # Updated by Corey Forman (digitalsleuth) : github.com/digitalsleuth
 # Version History
+#   2.0.0 - 20241220
+#       Fixes for misapplied variables for certain functions, added verbosity for command line, added docstring. Move out of release candidate
 #   2.0.0-rc12 - 20241220
 #       Fix for spacing in path for ffmpeg on Windows, added more verbose output, updated logging format.
 #   2.0.0-rc11 - 20241219
@@ -30,7 +32,18 @@
 #       improved error handling, removed old python2 code, removed unused imports. Prime Time!
 #   0.2.0 - 20220906
 #       Combined Bash Cat and FFmpeg Cat into a single script.
+"""
+dvd_transcoder.py
 
+dvd_transcoder is a Python 3 script which uses ffmpeg, ffprobe, alongside various methods
+to extract content from Video DVD files and convert them to a single format video file.
+This script is one of the tools available from the 'videomachine' collection. It is currently
+being maintained at https://github.com/digitalsleuth/videomachine
+
+Author: Bay Area Video Coalition
+Maintainer: Corey Forman (digitalsleuth)
+License: None applied at this time.
+"""
 import os
 import sys
 import glob
@@ -40,9 +53,10 @@ import platform
 import time
 import logging
 
-__version__ = "2.0.0-rc11"
+__version__ = "2.0.0"
 
 now = time.strftime("%Y%m%d-%H%M%S")
+
 
 def log(to_log_file=False, log_file=f"{now}-dvd-transcode.log"):
     logger = logging.getLogger("dvd-transcode")
@@ -56,13 +70,16 @@ def log(to_log_file=False, log_file=f"{now}-dvd-transcode.log"):
     logger.addHandler(stdout)
 
     if to_log_file:
-        log_fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        log_fmt = logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
         log_file = logging.FileHandler(log_file)
         log_file.setLevel(logging.DEBUG)
         log_file.setFormatter(log_fmt)
         logger.addHandler(log_file)
 
     return logger
+
 
 def main():
     system = platform.system()
@@ -74,11 +91,19 @@ def main():
         unmount_cmd = "umount"
         mount_pts = "/mnt/"
         ffmpeg_path = subprocess.run(
-            ["which", "ffmpeg"], capture_output=True, text=True, check=False, shell=False
+            ["which", "ffmpeg"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
         )
         ffmpeg_command = f"{(ffmpeg_path.stdout).rstrip()}"
         ffprobe_path = subprocess.run(
-            ["which", "ffprobe"], capture_output=True, text=True, check=False, shell=False
+            ["which", "ffprobe"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
         )
         ffprobe_command = f"{(ffprobe_path.stdout).rstrip()}"
     elif system == "Darwin":
@@ -86,11 +111,19 @@ def main():
         unmount_cmd = "hdiutil detach"
         mount_pts = "/Volumes/"
         ffmpeg_path = subprocess.run(
-            ["which", "ffmpeg"], capture_output=True, text=True, check=False, shell=False
+            ["which", "ffmpeg"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
         )
         ffmpeg_command = f"{(ffmpeg_path.stdout).rstrip()}"
         ffprobe_path = subprocess.run(
-            ["which", "ffprobe"], capture_output=True, text=True, check=False, shell=False
+            ["which", "ffprobe"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
         )
         ffprobe_command = f"{(ffprobe_path.stdout).rstrip()}"
     elif system == "Windows":
@@ -98,11 +131,19 @@ def main():
         unmount_cmd = "Dismount-DiskImage -ImagePath"
         mount_pts = None
         ffmpeg_path = subprocess.run(
-            ["where", "ffmpeg"], capture_output=True, text=True, check=False, shell=False
+            ["where", "ffmpeg"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
         ).stdout.split("\n")[0]
         ffmpeg_command = os.path.normpath(f'"{ffmpeg_path}"')
         ffprobe_path = subprocess.run(
-            ["where", "ffprobe"], capture_output=True, text=True, check=False, shell=False
+            ["where", "ffprobe"],
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
         ).stdout.split("\n")[0]
         ffprobe_command = ffprobe_path
     parser = argparse.ArgumentParser(
@@ -187,6 +228,7 @@ def main():
         help="allow overwrite of existing files, adds -y to ffmpeg command",
     )
     args = parser.parse_args()
+
     logger = log(to_log_file=args.log)
 
     if args.binary:
@@ -202,6 +244,7 @@ def main():
         logger.info(
             "[!] ffprobe not found in path! It is not required, but can detect the resolution of the source video and assist in transcoding to the same resolution."
         )
+    command_line = " ".join(sys.argv)
     verbose = args.verbose
     mode = args.mode
     modes = {
@@ -270,7 +313,7 @@ def main():
             output_path = args.output
     if verbose:
         logger.info("[+] Running in Verbose Mode")
-
+        logger.info(f"[+] Executed with: {command_line}")
     process_files = []
     if os.path.isdir(args.input):
         if args.recurse:
@@ -317,9 +360,13 @@ def main():
             if mode == 1:
                 logger.info(f"[-] Moving VOBs to {vob_path} and concatenating")
                 if cat_move_vobs_to_local(iso, mount_point, output_path):
-                    logger.info(f"[+] Finished moving and concatenating VOBs in {vob_path}")
+                    logger.info(
+                        f"[+] Finished moving and concatenating VOBs in {vob_path}"
+                    )
                     # Transcode vobs into the target format
-                    logger.info(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
+                    logger.info(
+                        f"[-] Transcoding VOBs in {vob_path} to {output_format}"
+                    )
                     errors = concat_transcode_vobs(
                         iso,
                         transcode_string,
@@ -354,9 +401,17 @@ def main():
                 ):
                     logger.info(f"[+] Finished transcoding VOBs to {output_format}")
                     # Concatenate vobs into a single file, format of the user's selection
-                    logger.info(f"[-] Concatenating {output_format} files from {vob_path}")
+                    logger.info(
+                        f"[-] Concatenating {output_format} files from {vob_path}"
+                    )
                     errors = ffmpeg_concatenate_vobs(
-                        iso, output_ext, ffmpeg_command, output_path, verbose, overwrite, logger
+                        iso,
+                        output_ext,
+                        ffmpeg_command,
+                        output_path,
+                        verbose,
+                        overwrite,
+                        logger,
                     )
                     if not errors:
                         logger.info(f"[+] Finished concatenating {output_format} files")
@@ -367,14 +422,24 @@ def main():
                     logger.warning("[!] No VOBs found.")
             elif mode == 3:
                 logger.info(f"[-] Moving VOBs to {vob_path} and concatenating")
-                vobs, move_errors = py_move_vobs_to_local(iso, mount_point, output_path, logger)
+                vobs, move_errors = py_move_vobs_to_local(
+                    iso, mount_point, output_path, logger
+                )
                 if vobs and move_errors:
-                    logger.error(f"[!] Errors detected moving and concatenating VOBs in {vob_path}")
+                    logger.error(
+                        f"[!] Errors detected moving and concatenating VOBs in {vob_path}"
+                    )
                     # Transcode vobs into the target format
-                    logger.info(f"[-] Attempting to transcode VOBs in {vob_path} to {output_format}")
+                    logger.info(
+                        f"[-] Attempting to transcode VOBs in {vob_path} to {output_format}"
+                    )
                 elif vobs and not move_errors:
-                    logger.info(f"[+] Finished moving and concatenating VOBs in {vob_path}")
-                    logger.info(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
+                    logger.info(
+                        f"[+] Finished moving and concatenating VOBs in {vob_path}"
+                    )
+                    logger.info(
+                        f"[-] Transcoding VOBs in {vob_path} to {output_format}"
+                    )
                 elif not vobs:
                     logger.warning("[!] No VOBs found")
                     continue
@@ -387,31 +452,38 @@ def main():
                     output_path,
                     verbose,
                     logger,
-                )                    
+                )
                 if not concat_errors and not move_errors:
                     logger.info(f"[+] Finished transcoding VOBs to {output_format}")
                     left_to_process.remove(iso)
                 else:
-                    logger.error(f"[!] Encountered an error transcoding VOBs in {vob_path}")
-                    
+                    logger.error(
+                        f"[!] Encountered an error transcoding VOBs in {vob_path}"
+                    )
+
             # CLEANUP
             cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger)
 
         # If the user quits the script mid-processes the script cleans up after itself
         except KeyboardInterrupt:
             logger.error(f"{BColors.FAIL}[!] User has quit the script{BColors.ENDC}")
-            cleanup(iso, mount_point, unmount_cmd, output_path, capture_output, logger)
+            cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger)
             sys.exit(1)
 
         logger.info("-----------------------")
-    logger.info(f"[+] Completed processing {total_files - len(left_to_process)} ISO files.")
+    logger.info(
+        f"[+] Completed processing {total_files - len(left_to_process)} ISO files."
+    )
     if len(left_to_process) > 0:
-        logger.warning("[!] The following files did not get converted, or were partially converted:")
+        logger.warning(
+            "[!] The following files did not get converted, or were partially converted:"
+        )
         for file in left_to_process:
             logger.warning(f"  - {file}")
 
 
 # FUNCTION DEFINITIONS
+
 
 def cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger):
     logger.info("[-] Removing Temporary Files")
@@ -419,7 +491,9 @@ def cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger)
     logger.info("[+] Finished Removing Temporary Files")
     logger.info(f"[-] Unmounting {iso}")
     if system == "Windows":
-        unmounted = unmount_win_image(iso, unmount_cmd, capture_output=not verbose, logger=logger)
+        unmounted = unmount_win_image(
+            iso, unmount_cmd, capture_output=not verbose, logger=logger
+        )
         if not unmounted or unmounted.returncode != 0:
             logger.error(
                 f"[!] Unable to unmount {iso}. Manual unmounting may be required."
@@ -427,7 +501,9 @@ def cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger)
         else:
             logger.info(f"[+] Unmounted {iso}")
     else:
-        unmount_image(mount_point, unmount_cmd, capture_output=not verbose, logger=logger)
+        unmount_image(
+            mount_point, unmount_cmd, capture_output=not verbose, logger=logger
+        )
         logger.info(f"[+] Unmounted {iso}")
         try:
             logger.info(f"[-] Removing mount point {mount_point}")
@@ -437,6 +513,7 @@ def cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger)
             logger.error(
                 f"[!] Unable to remove the {mount_point} mount point. Manual removal may be required."
             )
+
 
 def mount_image(iso_path, mount_pts, mount_cmd, capture_output, logger):
     mount_point_exists = True
@@ -485,7 +562,9 @@ def mount_win_image(iso, mount_cmd, verbose, logger):
         mount = run_command(full_mount_cmd, capture_output=True)
         drive_letter = mount.stdout.rstrip()
         if verbose:
-            verbose_output = run_command(f"Get-Volume {drive_letter} | Select *", capture_output=True)
+            verbose_output = run_command(
+                f"Get-Volume {drive_letter} | Select *", capture_output=True
+            )
             logger.info(verbose_output.stdout)
         return drive_letter
     except Exception as e:
@@ -638,12 +717,10 @@ def ffmpeg_move_vobs_to_local(
             except Exception:
                 pass
         ffmpeg_vob_copy_string = f"{ffmpeg_command} -i {v} -map 0:v:0 -map 0:a:0 -video_track_timescale 90000 -af apad -shortest -avoid_negative_ts make_zero -fflags +genpts -b:a 192k {transcode_string} {out_vob_path}"
-        run, stdout = run_ffmpeg(
-            ffmpeg_vob_copy_string, powershell=False
-        )
+        _, stdout = run_ffmpeg(ffmpeg_vob_copy_string, powershell=False)
         if verbose and stdout:
             for line in stdout:
-                logger.info(stdout)
+                logger.info(line)
 
     # See if mylist already exists, if so delete it.
     remove_cat_list(file_path, output_path, logger)
@@ -784,9 +861,7 @@ def concat_transcode_vobs(
                 f"[!] {output_path} exists and overwrite is set to 'NO', destination will not be overwritten"
             )
         else:
-            result, stdout = run_ffmpeg(
-                ffmpeg_vob_concat_string, powershell=False
-            )
+            result, stdout = run_ffmpeg(ffmpeg_vob_concat_string, powershell=False)
             if result.returncode != 0:
                 errors = True
             if verbose and stdout:
@@ -829,7 +904,7 @@ def concat_transcode_vobs(
                 if verbose and stdout:
                     for line in stdout:
                         logger.info(line)
-                        
+
             inc += 1
     return errors
 
@@ -861,35 +936,34 @@ def ffmpeg_concatenate_vobs(
         )
     else:
         result, stdout = run_ffmpeg(
-            ffmpeg_vob_concat_string, powershell=False, 
+            ffmpeg_vob_concat_string,
+            powershell=False,
         )
         if result.returncode != 0:
             errors = True
         if verbose and stdout:
             for line in stdout:
-                logger.info(line)        
+                logger.info(line)
         remove_cat_list(file_path, output_path, logger)
     return errors
+
 
 def run_ffmpeg(command, powershell=True):
     ffmpeg_out = []
     if powershell:
         command = ["powershell.exe", "-NoProfile", "-Command", command]
 
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True) as run:
+    with subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True
+    ) as run:
         stdout, stderr = run.communicate()
         if stdout:
             ffmpeg_out.extend(stdout.splitlines())
         if stderr:
             ffmpeg_out.extend(stderr.splitlines())
-        #for line in run.stdout:
-        #    ffmpeg_out.append(line.rstrip())
-        #for line in run.stderr:
-        #    ffmpeg_out.append(line.rstrip())
-        #run.wait()
 
     return run, ffmpeg_out
-    
+
 
 def run_command(command, powershell=True, capture_output=True):
 
@@ -937,8 +1011,9 @@ def remove_cat_list(file, output_dir, logger):
         try:
             os.remove(cat_file)
             logger.info(f"[-] Removing Cat List {cat_file}")
-        except OSError:
-            pass
+        except OSError as e:
+            logger.error(f"[!] Unable to remove Cat list {cat_file}:")
+            logger.error(e)
 
 
 def dir_recurse(path, recursive=True):
