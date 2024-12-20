@@ -3,6 +3,8 @@
 # BAVC DVD Transcoder
 # Updated by Corey Forman (digitalsleuth) : github.com/digitalsleuth
 # Version History
+#   2.0.0-rc12 - 20241220
+#       Fix for spacing in path for ffmpeg on Windows, added more verbose output, updated logging format.
 #   2.0.0-rc11 - 20241219
 #       Added specific function for running ffmpeg to capture output for logging and for displaying on stdout
 #   2.0.0-rc10 - 20241217
@@ -54,7 +56,7 @@ def log(to_log_file=False, log_file=f"{now}-dvd-transcode.log"):
     logger.addHandler(stdout)
 
     if to_log_file:
-        log_fmt = logging.Formatter("%(asctime)s | %(levelname)s\t | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+        log_fmt = logging.Formatter("%(asctime)s | %(levelname)-8s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
         log_file = logging.FileHandler(log_file)
         log_file.setLevel(logging.DEBUG)
         log_file.setFormatter(log_fmt)
@@ -98,7 +100,7 @@ def main():
         ffmpeg_path = subprocess.run(
             ["where", "ffmpeg"], capture_output=True, text=True, check=False, shell=False
         ).stdout.split("\n")[0]
-        ffmpeg_command = ffmpeg_path
+        ffmpeg_command = os.path.normpath(f'"{ffmpeg_path}"')
         ffprobe_path = subprocess.run(
             ["where", "ffprobe"], capture_output=True, text=True, check=False, shell=False
         ).stdout.split("\n")[0]
@@ -146,7 +148,7 @@ def main():
         "--mode",
         dest="mode",
         type=int,
-        help="Selects concatenation mode. 1 = Simple Bash Cat, 2 = FFmpeg Cat",
+        help="Selects concatenation mode. 1 = Simple Bash Cat, 2 = FFmpeg Cat, 3 = Python read/write bytes (default)",
         default=3,
     )
     parser.add_argument(
@@ -288,7 +290,7 @@ def main():
         # This part mounts the iso
         logger.info(f"[-] Mounting ISO {iso}")
         if system == "Windows":
-            drive_letter = mount_win_image(iso, mount_cmd, capture_output=True, logger=logger)
+            drive_letter = mount_win_image(iso, mount_cmd, verbose, logger=logger)
             if not drive_letter:
                 logger.error(
                     f"[!] Unable to mount {iso}. Check for available drive letters and permissions and try again."
@@ -296,8 +298,8 @@ def main():
                 sys.exit(1)
             else:
                 mount_point = f"{drive_letter}:\\"
+                logger.info(f"[+] ISO mounted at {mount_point}")
         else:
-
             mount_point, mount_result = mount_image(
                 iso, mount_pts, mount_cmd, capture_output=not verbose, logger=logger
             )
@@ -370,97 +372,71 @@ def main():
                     logger.error(f"[!] Errors detected moving and concatenating VOBs in {vob_path}")
                     # Transcode vobs into the target format
                     logger.info(f"[-] Attempting to transcode VOBs in {vob_path} to {output_format}")
-                    concat_errors = concat_transcode_vobs(
-                        iso,
-                        transcode_string,
-                        output_ext,
-                        ffmpeg_command,
-                        ffprobe_command,
-                        output_path,
-                        verbose,
-                        logger,
-                    )
                 elif vobs and not move_errors:
                     logger.info(f"[+] Finished moving and concatenating VOBs in {vob_path}")
                     logger.info(f"[-] Transcoding VOBs in {vob_path} to {output_format}")
-                    concat_errors = concat_transcode_vobs(
-                        iso,
-                        transcode_string,
-                        output_ext,
-                        ffmpeg_command,
-                        ffprobe_command,
-                        output_path,
-                        verbose,
-                        logger,
-                    )                    
-                    if not concat_errors:
-                        logger.info(f"[+] Finished transcoding VOBs to {output_format}")
-                        left_to_process.remove(iso)
-                    else:
-                        logger.error(f"[!] Encountered an error transcoding VOBs in {vob_path}")
-                else:
+                elif not vobs:
                     logger.warning("[!] No VOBs found")
-
-            # CLEANUP
-            logger.info("[-] Removing Temporary Files")
-            remove_temp_files(iso, output_path, logger)
-            # Delete all of the leftover files
-            logger.info("[+] Finished Removing Temporary Files")
-
-            # This part unmounts the iso
-            logger.info(f"[-] Unmounting {iso}")
-            if system == "Windows":
-                unmounted = unmount_win_image(iso, unmount_cmd, capture_output=True, logger=logger)
-                if not unmounted or unmounted.returncode != 0:
-                    logger.error(
-                        f"[!] Unable to unmount {iso}. Manual unmounting may be required."
-                    )
+                    continue
+                concat_errors = concat_transcode_vobs(
+                    iso,
+                    transcode_string,
+                    output_ext,
+                    ffmpeg_command,
+                    ffprobe_command,
+                    output_path,
+                    verbose,
+                    logger,
+                )                    
+                if not concat_errors and not move_errors:
+                    logger.info(f"[+] Finished transcoding VOBs to {output_format}")
+                    left_to_process.remove(iso)
                 else:
-                    logger.info(f"[+] Unmounted {iso}")
-            else:
-                unmount_image(mount_point, unmount_cmd, capture_output=not verbose, logger=logger)
-                logger.info(f"[+] Unmounted {iso}")
-            if system != "Windows":
-                try:
-                    logger.info(f"[-] Removing mount point {mount_point}")
-                    os.rmdir(mount_point)
-                    logger.info(f"[+] Mount point {mount_point} removed")
-                except PermissionError:
-                    logger.error(
-                        f"[!] Unable to remove the {mount_point} mount point. Manual removal may be required."
-                    )
+                    logger.error(f"[!] Encountered an error transcoding VOBs in {vob_path}")
+                    
+            # CLEANUP
+            cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger)
 
         # If the user quits the script mid-processes the script cleans up after itself
         except KeyboardInterrupt:
             logger.error(f"{BColors.FAIL}[!] User has quit the script{BColors.ENDC}")
-            try:
-                if system != "Windows":
-                    unmount_image(mount_point, unmount_cmd, capture_output=not verbose, logger=logger)
-                else:
-                    unmounted = unmount_win_image(
-                        iso, unmount_cmd, capture_output=not verbose, logger=logger
-                    )
-                    if not unmounted or unmounted.returncode != 0:
-                        logger.error(
-                            f"[!] Unable to unmount {iso}. Manual unmounting may be required."
-                        )
-                    else:
-                        logger.info(f"[+] Unmounted {iso}")
-                remove_temp_files(iso, output_path, logger)
-            except:
-                pass
+            cleanup(iso, mount_point, unmount_cmd, output_path, capture_output, logger)
             sys.exit(1)
 
         logger.info("-----------------------")
     logger.info(f"[+] Completed processing {total_files - len(left_to_process)} ISO files.")
     if len(left_to_process) > 0:
-        logger.warning("[!] The following files did not get converted:")
+        logger.warning("[!] The following files did not get converted, or were partially converted:")
         for file in left_to_process:
             logger.warning(f"  - {file}")
 
 
 # FUNCTION DEFINITIONS
 
+def cleanup(iso, mount_point, unmount_cmd, system, output_path, verbose, logger):
+    logger.info("[-] Removing Temporary Files")
+    remove_temp_files(iso, output_path, logger)
+    logger.info("[+] Finished Removing Temporary Files")
+    logger.info(f"[-] Unmounting {iso}")
+    if system == "Windows":
+        unmounted = unmount_win_image(iso, unmount_cmd, capture_output=not verbose, logger=logger)
+        if not unmounted or unmounted.returncode != 0:
+            logger.error(
+                f"[!] Unable to unmount {iso}. Manual unmounting may be required."
+            )
+        else:
+            logger.info(f"[+] Unmounted {iso}")
+    else:
+        unmount_image(mount_point, unmount_cmd, capture_output=not verbose, logger=logger)
+        logger.info(f"[+] Unmounted {iso}")
+        try:
+            logger.info(f"[-] Removing mount point {mount_point}")
+            os.rmdir(mount_point)
+            logger.info(f"[+] Mount point {mount_point} removed")
+        except PermissionError:
+            logger.error(
+                f"[!] Unable to remove the {mount_point} mount point. Manual removal may be required."
+            )
 
 def mount_image(iso_path, mount_pts, mount_cmd, capture_output, logger):
     mount_point_exists = True
@@ -502,12 +478,16 @@ def unmount_image(mount_point, unmount_cmd, capture_output, logger):
     return False
 
 
-def mount_win_image(iso, mount_cmd, capture_output, logger):
+def mount_win_image(iso, mount_cmd, verbose, logger):
     iso = os.path.normpath(iso)
     full_mount_cmd = f'{mount_cmd} "{iso}" | Get-Volume | Select -Expand DriveLetter'
     try:
-        mount = run_command(full_mount_cmd, capture_output=capture_output)
-        return mount.stdout.rstrip()
+        mount = run_command(full_mount_cmd, capture_output=True)
+        drive_letter = mount.stdout.rstrip()
+        if verbose:
+            verbose_output = run_command(f"Get-Volume {drive_letter} | Select *", capture_output=True)
+            logger.info(verbose_output.stdout)
+        return drive_letter
     except Exception as e:
         logger.info(e)
     return False
