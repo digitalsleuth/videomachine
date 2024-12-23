@@ -244,7 +244,7 @@ def main():
         logger.info(
             "[!] ffprobe not found in path! It is not required, but can detect the resolution of the source video and assist in transcoding to the same resolution."
         )
-    command_line = " ".join(sys.argv)
+    command_line = ' '.join(sys.argv)
     verbose = args.verbose
     mode = args.mode
     modes = {
@@ -338,7 +338,8 @@ def main():
                 logger.error(
                     f"[!] Unable to mount {iso}. Check for available drive letters and permissions and try again."
                 )
-                sys.exit(1)
+                logger.info("-----------------------")
+                continue
             else:
                 mount_point = f"{drive_letter}:\\"
                 logger.info(f"[+] ISO mounted at {mount_point}")
@@ -350,7 +351,7 @@ def main():
                 logger.error(
                     f"{BColors.FAIL}[!] Mounting failed. Try running script in sudo / admin mode{BColors.ENDC}"
                 )
-                sys.exit(1)
+                continue
             logger.info(f"[+] ISO mounted at {mount_point}")
 
         vob_path = f"{output_path}{os.path.basename(iso)}.VOBS"
